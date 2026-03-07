@@ -1,6 +1,8 @@
 import os
+import json
 import asyncio
 import logging
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -11,43 +13,78 @@ from telegram.ext import (
     filters,
 )
 
-# ========= НАСТРОЙКИ =========
 TOKEN = ("8722347795:AAHkjvoZ0sAPZMb6wztkRI9YuDB-E8zoUKU")
 CHANNEL_USERNAME = "@Data_Osinter"
-ANTISPAM_SECONDS = 5
+
+DAILY_LIMIT = 3
 SEARCH_TIMEOUT = 600
 MAX_CONCURRENT_SEARCHES = 3
 
-# ========= ЛОГИ =========
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ========= ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ =========
 search_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SEARCHES)
-user_last_request = {}
 
-# ========= КНОПКИ =========
+DB_FILE = "users.json"
 
-def subscribe_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 Подписаться",
-         url=f"https://t.me/{CHANNEL_USERNAME.replace('@','')}")],
-        [InlineKeyboardButton("✅ Я подписался", callback_data="check_sub")]
-    ])
+
+# ================= DATABASE =================
+
+def load_db():
+    if not os.path.exists(DB_FILE):
+        return {}
+    with open(DB_FILE, "r") as f:
+        return json.load(f)
+
+
+def save_db(db):
+    with open(DB_FILE, "w") as f:
+        json.dump(db, f)
+
+
+db = load_db()
+
+
+def get_user(user_id):
+    uid = str(user_id)
+
+    if uid not in db:
+        db[uid] = {
+            "requests": DAILY_LIMIT,
+            "date": str(datetime.now().date()),
+            "referrals": 0,
+            "invited_by": None
+        }
+        save_db(db)
+
+    user = db[uid]
+
+    today = str(datetime.now().date())
+
+    if user["date"] != today:
+        user["date"] = today
+        user["requests"] = DAILY_LIMIT
+        save_db(db)
+
+    return user
+
+
+# ================= KEYBOARDS =================
 
 def main_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("ℹ️ Информация", callback_data="info")]
+        [InlineKeyboardButton("ℹ️ Информация", callback_data="info")],
+        [InlineKeyboardButton("🎁 Реферальная помощь", callback_data="ref")]
     ])
 
-def info_keyboard():
+
+def ref_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 Открыть канал",
-         url=f"https://t.me/{CHANNEL_USERNAME.replace('@','')}")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back")]
     ])
 
-# ========= ПРОВЕРКА ПОДПИСКИ =========
+
+# ================= SUB CHECK =================
 
 async def check_subscription(user_id, context):
     try:
@@ -56,88 +93,128 @@ async def check_subscription(user_id, context):
     except:
         return False
 
-# ========= START =========
+
+# ================= START =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     user_id = update.effective_user.id
+    args = context.args
 
-    if await check_subscription(user_id, context):
-        await update.message.reply_text(
-            "👋 Привет!\n\nОтправь username для поиска.",
-            reply_markup=main_keyboard()
-        )
-    else:
-        await update.message.reply_text(
-            "🚫 Нужно подписаться на канал.",
-            reply_markup=subscribe_keyboard()
-        )
+    user = get_user(user_id)
 
-# ========= КНОПКИ =========
+    if args:
+
+        ref_id = args[0]
+
+        if ref_id != str(user_id) and user["invited_by"] is None:
+
+            if ref_id in db:
+                user["invited_by"] = ref_id
+                db[ref_id]["requests"] += 1
+                db[ref_id]["referrals"] += 1
+                save_db(db)
+
+    await update.message.reply_text(
+        "👋 Отправь username для поиска.",
+        reply_markup=main_keyboard()
+    )
+
+
+# ================= BUTTONS =================
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
     await query.answer()
+
     user_id = query.from_user.id
 
-    if query.data == "check_sub":
-        if await check_subscription(user_id, context):
-            await query.edit_message_text(
-                "✅ Подписка подтверждена!\n\nТеперь отправь username.",
-                reply_markup=main_keyboard()
-            )
-        else:
-            await query.answer("❌ Вы не подписаны!", show_alert=True)
+    if query.data == "info":
 
-    elif query.data == "info":
+        user = get_user(user_id)
+
         await query.edit_message_text(
-            f"Бот ищет аккаунты через Maigret.\n\nКанал: {CHANNEL_USERNAME}",
-            reply_markup=info_keyboard()
+            f"""
+Бот ищет аккаунты через Maigret
+
+📊 Осталось запросов: {user['requests']}
+👥 Рефералов: {user['referrals']}
+""",
+            reply_markup=main_keyboard()
+        )
+
+    elif query.data == "ref":
+
+        bot_username = (await context.bot.get_me()).username
+
+        ref_link = f"https://t.me/{bot_username}?start={user_id}"
+
+        user = get_user(user_id)
+
+        await query.edit_message_text(
+            f"""
+🎁 Реферальная программа
+
+Приглашай друзей и получай +1 поиск.
+
+Твоя ссылка:
+
+{ref_link}
+
+👥 Приглашено: {user['referrals']}
+""",
+            reply_markup=ref_keyboard()
         )
 
     elif query.data == "back":
+
         await query.edit_message_text(
-            "Отправь username для поиска.",
+            "Отправь username для поиска",
             reply_markup=main_keyboard()
         )
 
-# ========= ПОИСК =========
+
+# ================= SEARCH =================
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     user_id = update.effective_user.id
-    now = asyncio.get_running_loop().time()
+    username = update.message.text.strip()
 
     if not await check_subscription(user_id, context):
+
+        await update.message.reply_text("Подпишись на канал")
+        return
+
+    user = get_user(user_id)
+
+    if user["requests"] <= 0:
+
         await update.message.reply_text(
-            "🚫 Нужно подписаться.",
-            reply_markup=subscribe_keyboard()
+            "❌ Лимит запросов на сегодня исчерпан.\n\n"
+            "Приглашай друзей через реферальную программу."
         )
         return
 
-    if user_id in user_last_request and now - user_last_request[user_id] < ANTISPAM_SECONDS:
-        await update.message.reply_text("⚠ Подожди несколько секунд.")
-        return
+    user["requests"] -= 1
+    save_db(db)
 
-    user_last_request[user_id] = now
-    username = update.message.text.strip()
-
-    if not username.replace("_", "").isalnum():
-        await update.message.reply_text("❌ Некорректный username.")
-        return
-
-    msg = await update.message.reply_text(f"🔎 Ищу {username}...")
+    msg = await update.message.reply_text("🔎 Поиск...")
 
     async with search_semaphore:
+
         try:
+
             process = await asyncio.create_subprocess_exec(
-                    "python", "-m", "maigret", username,
-                    "--all",
-                    "--with-domains",
-                    "--top-sites", "2000",
-                    "--no-progressbar",
-                    "--timeout", "15",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                   )
+                "python", "-m", "maigret", username,
+                "--all",
+                "--with-domains",
+                "--top-sites", "2000",
+                "--no-progressbar",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
 
             stdout, _ = await asyncio.wait_for(
                 process.communicate(),
@@ -145,53 +222,47 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         except asyncio.TimeoutError:
-            process.kill()
-            await msg.edit_text("⏱ Время вышло.")
-            return
 
-        except Exception as e:
-            logger.error(e)
-            await msg.edit_text("⚠ Ошибка поиска.")
+            process.kill()
+            await msg.edit_text("⏱ Время вышло")
             return
 
     result = stdout.decode(errors="ignore")
+
     links = [line for line in result.splitlines() if "http" in line]
 
     if not links:
-        await msg.edit_text("❌ Ничего не найдено.")
+
+        await msg.edit_text("Ничего не найдено")
         return
 
     filename = f"result_{username}.txt"
 
-    with open(filename, "w", encoding="utf-8") as f:
+    with open(filename, "w") as f:
         f.write("\n".join(links))
 
-    await msg.edit_text("📁 Отправляю файл...")
-
-    with open(filename, "rb") as f:
-        await context.bot.send_document(chat_id=user_id, document=f)
+    await context.bot.send_document(
+        chat_id=user_id,
+        document=open(filename, "rb")
+    )
 
     os.remove(filename)
 
-# ========= ERROR =========
+    await msg.delete()
 
-async def error_handler(update, context):
-    logger.error(context.error)
 
-# ========= MAIN =========
+# ================= MAIN =================
 
 def main():
-    if not TOKEN:
-        raise RuntimeError("Установи BOT_TOKEN")
 
     app = Application.builder().token(TOKEN).concurrent_updates(True).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search))
-    app.add_error_handler(error_handler)
 
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
