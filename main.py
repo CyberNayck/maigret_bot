@@ -13,26 +13,32 @@ from telegram.ext import (
     filters,
 )
 
-TOKEN = ("8722347795:AAHkjvoZ0sAPZMb6wztkRI9YuDB-E8zoUKU")
+# ========= НАСТРОЙКИ =========
+
+TOKEN = "8722347795:AAHkjvoZ0sAPZMb6wztkRI9YuDB-E8zoUKU"
 CHANNEL_USERNAME = "@Data_Osinter"
 
 DAILY_LIMIT = 3
 SEARCH_TIMEOUT = 600
 MAX_CONCURRENT_SEARCHES = 3
+ANTISPAM_SECONDS = 5
+
+DB_FILE = "users.json"
+
+# ========= ЛОГИ =========
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 search_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SEARCHES)
+user_last_request = {}
 
-DB_FILE = "users.json"
-
-
-# ========= DATABASE =========
+# ========= БАЗА =========
 
 def load_db():
     if not os.path.exists(DB_FILE):
         return {}
+
     with open(DB_FILE, "r") as f:
         return json.load(f)
 
@@ -72,8 +78,22 @@ def get_user(user_id):
 
 # ========= КНОПКИ =========
 
+def subscribe_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "📢 Подписаться",
+            url=f"https://t.me/{CHANNEL_USERNAME.replace('@','')}"
+        )],
+        [InlineKeyboardButton(
+            "✅ Я подписался",
+            callback_data="check_sub"
+        )]
+    ])
+
+
 def main_keyboard():
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔎 Поиск", callback_data="search")],
         [InlineKeyboardButton("ℹ️ Информация", callback_data="info")],
         [InlineKeyboardButton("🎁 Реферальная помощь", callback_data="ref")]
     ])
@@ -81,8 +101,10 @@ def main_keyboard():
 
 def info_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 Открыть канал",
-         url=f"https://t.me/{CHANNEL_USERNAME.replace('@','')}")],
+        [InlineKeyboardButton(
+            "📢 Открыть канал",
+            url=f"https://t.me/{CHANNEL_USERNAME.replace('@','')}"
+        )],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back")]
     ])
 
@@ -96,9 +118,20 @@ def ref_keyboard():
 # ========= ПРОВЕРКА ПОДПИСКИ =========
 
 async def check_subscription(user_id, context):
+
     try:
-        member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status in ["member", "administrator", "creator"]
+
+        member = await context.bot.get_chat_member(
+            CHANNEL_USERNAME,
+            user_id
+        )
+
+        return member.status in [
+            "member",
+            "administrator",
+            "creator"
+        ]
+
     except:
         return False
 
@@ -119,13 +152,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if ref_id != str(user_id) and user["invited_by"] is None:
 
             if ref_id in db:
+
                 user["invited_by"] = ref_id
                 db[ref_id]["requests"] += 1
                 db[ref_id]["referrals"] += 1
+
                 save_db(db)
 
+    if not await check_subscription(user_id, context):
+
+        await update.message.reply_text(
+            "🚫 Для использования бота подпишитесь на канал.",
+            reply_markup=subscribe_keyboard()
+        )
+        return
+
     await update.message.reply_text(
-        "👋 Отправь username для поиска.",
+        "👋 Добро пожаловать.\n\nОтправь username для поиска.",
         reply_markup=main_keyboard()
     )
 
@@ -138,10 +181,25 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     user_id = query.from_user.id
+    user = get_user(user_id)
 
-    if query.data == "info":
+    if query.data == "check_sub":
 
-        user = get_user(user_id)
+        if await check_subscription(user_id, context):
+
+            await query.edit_message_text(
+                "✅ Подписка подтверждена.\n\nОтправь username для поиска.",
+                reply_markup=main_keyboard()
+            )
+
+        else:
+
+            await query.answer(
+                "❌ Вы не подписаны на канал.",
+                show_alert=True
+            )
+
+    elif query.data == "info":
 
         await query.edit_message_text(
             f"""
@@ -161,8 +219,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ref_link = f"https://t.me/{bot_username}?start={user_id}"
 
-        user = get_user(user_id)
-
         await query.edit_message_text(
             f"""
 🎁 Реферальная программа
@@ -181,7 +237,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "back":
 
         await query.edit_message_text(
-            "Отправь username для поиска",
+            "Отправь username для поиска.",
             reply_markup=main_keyboard()
         )
 
@@ -195,8 +251,20 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not await check_subscription(user_id, context):
 
-        await update.message.reply_text("Подпишись на канал")
+        await update.message.reply_text(
+            "🚫 Подпишитесь на канал.",
+            reply_markup=subscribe_keyboard()
+        )
         return
+
+    now = asyncio.get_running_loop().time()
+
+    if user_id in user_last_request and now - user_last_request[user_id] < ANTISPAM_SECONDS:
+
+        await update.message.reply_text("⚠ Подожди несколько секунд.")
+        return
+
+    user_last_request[user_id] = now
 
     user = get_user(user_id)
 
@@ -204,7 +272,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(
             "❌ Лимит запросов на сегодня исчерпан.\n\n"
-            "Приглашай друзей через реферальную программу."
+            "Приглашай друзей через реферальную систему."
         )
         return
 
@@ -238,13 +306,19 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text("⏱ Время вышло")
             return
 
+        except Exception as e:
+
+            logger.error(e)
+            await msg.edit_text("⚠ Ошибка поиска")
+            return
+
     result = stdout.decode(errors="ignore")
 
     links = [line for line in result.splitlines() if "http" in line]
 
     if not links:
 
-        await msg.edit_text("Ничего не найдено")
+        await msg.edit_text("❌ Ничего не найдено")
         return
 
     filename = f"result_{username}.txt"
@@ -265,6 +339,9 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========= MAIN =========
 
 def main():
+
+    if not TOKEN:
+        raise RuntimeError("Укажи TOKEN")
 
     app = Application.builder().token(TOKEN).concurrent_updates(True).build()
 
