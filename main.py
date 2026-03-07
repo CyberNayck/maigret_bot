@@ -93,7 +93,6 @@ def subscribe_keyboard():
 
 def main_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔎 Поиск", callback_data="search")],
         [InlineKeyboardButton("ℹ️ Информация", callback_data="info")],
         [InlineKeyboardButton("🎁 Реферальная помощь", callback_data="ref")]
     ])
