@@ -28,7 +28,7 @@ search_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SEARCHES)
 DB_FILE = "users.json"
 
 
-# ================= DATABASE =================
+# ========= DATABASE =========
 
 def load_db():
     if not os.path.exists(DB_FILE):
@@ -46,6 +46,7 @@ db = load_db()
 
 
 def get_user(user_id):
+
     uid = str(user_id)
 
     if uid not in db:
@@ -69,12 +70,20 @@ def get_user(user_id):
     return user
 
 
-# ================= KEYBOARDS =================
+# ========= КНОПКИ =========
 
 def main_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("ℹ️ Информация", callback_data="info")],
         [InlineKeyboardButton("🎁 Реферальная помощь", callback_data="ref")]
+    ])
+
+
+def info_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Открыть канал",
+         url=f"https://t.me/{CHANNEL_USERNAME.replace('@','')}")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="back")]
     ])
 
 
@@ -84,7 +93,7 @@ def ref_keyboard():
     ])
 
 
-# ================= SUB CHECK =================
+# ========= ПРОВЕРКА ПОДПИСКИ =========
 
 async def check_subscription(user_id, context):
     try:
@@ -94,7 +103,7 @@ async def check_subscription(user_id, context):
         return False
 
 
-# ================= START =================
+# ========= START =========
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -121,7 +130,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ================= BUTTONS =================
+# ========= КНОПКИ =========
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -136,12 +145,14 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(
             f"""
-Бот ищет аккаунты через Maigret
+🤖 Бот ищет аккаунты через Maigret
 
 📊 Осталось запросов: {user['requests']}
 👥 Рефералов: {user['referrals']}
+
+📢 Канал: {CHANNEL_USERNAME}
 """,
-            reply_markup=main_keyboard()
+            reply_markup=info_keyboard()
         )
 
     elif query.data == "ref":
@@ -175,7 +186,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# ================= SEARCH =================
+# ========= ПОИСК =========
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -251,7 +262,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.delete()
 
 
-# ================= MAIN =================
+# ========= MAIN =========
 
 def main():
 
