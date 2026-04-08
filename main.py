@@ -142,9 +142,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif q.data == "info":
         await q.edit_message_text(
             f"""
-🤖 Бот ищет аккаунты через Maigret
+🤖 Бот ищет через Maigret
 
-📊 Осталось запросов: {user['requests']}
+📊 Осталось: {user['requests']}
 👥 Рефералы: {user['referrals']}
 
 📢 Канал: {CHANNEL}
@@ -160,10 +160,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"""
 🎁 Реферальная система
 
-+1 запрос за каждого пользователя
++1 запрос за человека
 
-🔗 Ваша ссылка:
-{link}
+🔗 {link}
 
 👥 Приглашено: {user['referrals']}
 """,
@@ -175,12 +174,13 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """
 ⚑ Флажки:
 
+--all → искать везде  
 --timeout 5 → быстрее  
 --retries 0 → без повторов  
 --proxy URL → прокси  
 --tor-proxy → TOR  
 --with-domains → домены  
---top-sites 500 → лимит сайтов  
+--top-sites 500 → лимит  
 
 📌 Пример:
 username --timeout 5
@@ -222,7 +222,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = asyncio.get_running_loop().time()
 
     if uid in last_request and now - last_request[uid] < ANTISPAM:
-        await update.message.reply_text("⚠ Подожди пару секунд")
+        await update.message.reply_text("⚠ Подожди")
         return
 
     last_request[uid] = now
@@ -237,19 +237,18 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_db()
 
     parts = text.split()
-username = parts[0]
-flags = parts[1:]
+    username = parts[0]
+    flags = parts[1:]
 
-# 🔥 если флагов нет — добавляем --all
-if not flags:
-    flags = ["--all"]
+    # 🔥 ГЛАВНОЕ — если нет флагов → добавляем --all
+    if not flags:
+        flags = ["--all"]
 
     msg = await update.message.reply_text("🔎 Поиск...")
 
     async with semaphore:
         try:
-            cmd = ["python3", "-m", "maigret", username]
-            cmd += flags
+            cmd = ["python3", "-m", "maigret", username] + flags
 
             process = await asyncio.create_subprocess_exec(
                 *cmd,
