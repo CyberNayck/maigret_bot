@@ -237,8 +237,12 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_db()
 
     parts = text.split()
-    username = parts[0]
-    flags = parts[1:]
+username = parts[0]
+flags = parts[1:]
+
+# 🔥 если флагов нет — добавляем --all
+if not flags:
+    flags = ["--all"]
 
     msg = await update.message.reply_text("🔎 Поиск...")
 
